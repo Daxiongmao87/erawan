@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chat Interface</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/2.3.3/purify.min.js"></script>
+</head>
+<body>
+    <div id="container">
+        <div id="sidebar">
+            <span>
+                <button id="dark-mode-toggle"><i class="fa-solid fa-moon"></i></button>
+                <button id="new-bot-btn">Create New Bot</button>
+            </span>
+            <div id="bots-list"></div>
+            <button id="configure-endpoints-btn">Configure Endpoints</button>
+        </div>
+        <div id="chat-container">
+            <div id="messages"></div>
+            <div id="chat-form">
+                <textarea id="user-input" placeholder="Type a message..." required></textarea>
+                <button id="send-button">Send</button>
+            </div>
+        </div>
+        <button id="menu-toggle" class="menu-toggle"><i class="fas fa-bars"></i></button>
+    </div>
+
+    <div id="new-bot-modal" class="modal">
+        <div class="modal-content">
+            <h3>Create New Bot</h3>
+            <input type="text" id="new-bot-name" placeholder="Enter new bot name">
+            <textarea id="new-bot-persona" placeholder="Enter new bot persona"></textarea>
+            <select id="new-bot-endpoint">
+                <!-- Endpoint options will be populated dynamically -->
+            </select>
+            <div class="modal-buttons">
+                <button id="create-bot-btn">Create Bot</button>
+                <button id="cancel-create-btn">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="bot-info-modal" class="modal">
+        <div class="modal-content">
+            <h3>Bot Info</h3>
+            <p id="bot-persona"></p>
+            <select id="bot-endpoint">
+                <!-- Endpoint options will be populated dynamically -->
+            </select>
+            <button id="close-info-btn">Close</button>
+        </div>
+    </div>
+
+    <div id="confirm-delete-modal" class="modal">
+        <div class="modal-content">
+            <h3>Confirm Deletion</h3>
+            <p>Are you sure you want to delete this bot?</p>
+            <div class="modal-buttons">
+                <button id="confirm-delete-btn">Delete</button>
+                <button id="cancel-delete-btn">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="configure-endpoints-modal" class="modal">
+        <div class="modal-content">
+            <h3>Configure Endpoints</h3>
+            <div id="endpoints-list">
+                <!-- Endpoint entries will be populated dynamically -->
+            </div>
+            <h4>Add New Endpoint</h4>
+            <input type="text" id="new-endpoint-name" placeholder="Endpoint name">
+            <input type="text" id="new-endpoint-url" placeholder="API URL">
+            <input type="text" id="new-endpoint-model" placeholder="Model">
+            <input type="text" id="new-endpoint-token" placeholder="Token (optional)">
+            <input type="number" id="new-endpoint-context-length" placeholder="Context Length">
+            <input type="number" id="new-endpoint-reserved-tokens" placeholder="Reserved Tokens for Response">
+            <div class="modal-buttons">
+                <button id="add-endpoint-btn">Add Endpoint</button>
+                <button id="close-endpoint-config-btn">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/scripts.js') }}"></script>
+</body>
+</html>

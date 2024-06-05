@@ -1,0 +1,6 @@
+[system_api_endpoint]
+api_url =  https://api.openai.com/v1/chat/completions
+model = gpt-3.5-turbo
+token = 
+context_length = 16385
+reserved_tokens_for_response = 4096
