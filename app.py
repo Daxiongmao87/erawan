@@ -8,6 +8,7 @@ from datetime import datetime
 from werkzeug.exceptions import BadRequest
 import logging
 import time
+from sqlalchemy import func, or_
 
 # Set up logging
 logging.basicConfig(level=logging.DEBUG)
@@ -24,14 +25,6 @@ db = SQLAlchemy(app)
 
 MAX_RETRIES = 3
 RETRY_DELAY = 2  # seconds
-
-# Configurable parameters
-TOTAL_TOKEN_LIMIT = 128000
-RESERVED_TOKENS_FOR_RESPONSE = 4096
-PROMPT_TOKEN_LIMIT = TOTAL_TOKEN_LIMIT - RESERVED_TOKENS_FOR_RESPONSE
-TRUNCATION_LIMIT = int(PROMPT_TOKEN_LIMIT * 2 / 5)
-MEMORY_SUMMARY_LIMIT = int(PROMPT_TOKEN_LIMIT * 1 / 5)
-LATEST_MESSAGES_LIMIT = int(PROMPT_TOKEN_LIMIT * 1 / 5)
 
 class CRUDMixin:
     @classmethod
@@ -303,25 +296,38 @@ def make_api_call_with_retries(api_url, headers, json_data):
             app.logger.warning(f"Unexpected error. Retrying... {retries}/{MAX_RETRIES}")
             time.sleep(RETRY_DELAY)
 
-def get_bot_conversation(bot_name):
-    conversation = MainConversation.query.filter_by(bot_name=bot_name).order_by(MainConversation.timestamp.desc()).limit(2).all()
+def get_bot_conversation(bot_name, limit = 0):
+    if limit > 0:
+        conversation = MainConversation.query.filter_by(bot_name=bot_name).order_by(MainConversation.timestamp.desc()).limit(limit).all()
+        conversation.reverse()
+    else:
+        conversation = MainConversation.query.filter_by(bot_name=bot_name).order_by(MainConversation.timestamp.asc()).all()
     return conversation
 
 def extract_keywords(text, latest_exchange):
     prompt = f"""
     Verbosely extract relevant keywords from the following text.  
     Be complete and thorough. 
-    Utilize the previous exchanges in the conversation history mainly as a contextutal reference.
+    Utilize the conversation history mainly as a contextutal reference.
     Focus on the very latest exchange for keywords.
 
-    Last Exchange:
-    {latest_exchange}
+    Conversation History (ONLY FOR CONTEXTUAL REASONS):
+    --- SEGMENT ---
+    {text}
+    --- SEGMENT ---
 
+    Last Exchange (FOCUS HERE FOR KEYWORDS):
+    --- SEGMENT ---
+    {latest_exchange}
+    --- SEGMENT ---
+
+    NOTE: AVOID KEYWORDS THAT HAVE NO ASSOCIATION WITH THE TOPICS IN THE LAST EXCHANGE
+    NOTE: MAKE SURE SEARCH TERMS ARE UNIQUE IDENTIFIERS.
+    NOTE: INCLUDE AS MANY SYNONYMS OR RELATED WORDS FOR INCREASE SEARCH RELIABILITY.
     Respond with a JSON object in the format:
     {{
         "keywords": ["<keyword1>", "<keyword2>", "<keyword3>", "<etc> ..."]
-    }}:
-    {text}
+    }}
     """
     print(f"Prompt: {prompt}")
     response = system_api_endpoint_call(prompt)
@@ -338,23 +344,77 @@ def extract_keywords(text, latest_exchange):
         return []
 
     return keywords
-
     
-def store_memory(bot_id, timestamp, content):
-    memory = Memory.create(bot_id=bot_id, timestamp=timestamp, content=content)
-    keywords = extract_keywords(content, content)
+def store_memory(bot_id, timestamp, conversation_text, content):
+    prompt = f"""
+    Break the following group of texts into separate, yet coherent smaller groups of texts without losing any information.  
+    Each group covering a specific subtopic, and only be around 4 sentences in length.
 
-    for keyword in keywords:
+    Text:
+    --- SEGMENT ---
+    {content}
+    --- SEGMENT ---
+    Use the following JSON format:
+    {{
+        "topic": "<Overall topic of this text>",
+        "number_of_subtopics": "<Number of subtopics to record from text>",
+        "groups": [
+            {{
+                "text": "<USER/ASSISTANT>: <Text of subtopic 1>"
+            }},
+            {{
+                "text": "<USER/ASSISTANT>: <Text of subtopic 2>"
+            }},
+            {{
+                "text": "<USER/ASSISTANT>: <Text of subtopic 3>"
+            }},
+            {{
+                "<etc>": "<etc>"
+            }}                         
+        ]
+    }}
+    """
+    response = system_api_endpoint_call(prompt)
+    print(f"Store Memory Response: {response}")
+    try:
+        response_json = json.loads(response)
+        groups = response_json.get("groups", [])
+        
+    except json.JSONDecodeError:
+        print("Invalid JSON response:", response)
+        return []
+    keywords = [response_json.get("topic")]
+    keywords.extend(extract_keywords(conversation_text, content))
+    memory = Memory.create(bot_id=bot_id, timestamp=timestamp, content=content)
+    for group in groups:
+        text = group['text']
+        new_keywords = extract_keywords(conversation_text, text)
+        keywords.extend(new_keywords)
+    # Flatten the keywords list and ensure unique keywords
+    unique_keywords = set(keywords)
+    for keyword in unique_keywords:
         Keyword.create(memory_id=memory.id, keyword=keyword)
 
 def search_memories(bot_id, keywords):
-    memories = Memory.query.filter_by(bot_id=bot_id).join(Keyword).filter(Keyword.keyword.in_(keywords)).all()
-    return memories
+    keyword_conditions = [Memory.content.ilike(f"%{keyword}%") for keyword in keywords]
 
-def truncate_message_history(conversation):
-    total_tokens = sum(len(msg.conversation) // 4 for msg in conversation)
-    while total_tokens > TRUNCATION_LIMIT and len(conversation) > 1:
-        total_tokens -= len(conversation.pop(0).conversation) // 4
+    memories = (Memory.query
+                .filter_by(bot_id=bot_id)
+                .filter(or_(*keyword_conditions))
+                .with_entities(Memory, func.count(Memory.content).label('keyword_count'))
+                .group_by(Memory.id)
+                .order_by(func.count(Memory.content).asc())
+                .all())
+    
+    return [memory for memory, _ in memories]
+
+
+def truncate_message_history(conversation, truncation_char_limit):
+    print("truncation_char_limit: ", truncation_char_limit)
+    total_chars = sum(len(msg.conversation) for msg in conversation)
+    print("total_chars: ", total_chars)
+    while total_chars > truncation_char_limit and len(conversation) > 1:
+        total_chars -= len(conversation.pop(0).conversation)
     return conversation
 
 def parse_summary_response(response):
@@ -365,27 +425,34 @@ def parse_summary_response(response):
         logging.error("Failed to decode JSON response")
         return ""
 
-def summarize_memory(memories, keywords):
+def summarize_memory(memories, keywords, system_memory_summary_char_limit, memory_summary_char_limit):
     memory_text = "\n".join([memory.content for memory in memories])
     api_url = config.get('system_api_endpoint', 'api_url')
     context_length = config.getint('system_api_endpoint', 'context_length')
     reserved_tokens_for_response = config.getint('system_api_endpoint', 'reserved_tokens_for_response')
-    max_prompt_length = context_length - reserved_tokens_for_response
+    max_prompt_length = system_memory_summary_char_limit
 
     # Split memory text into manageable chunks
-    chunks = [memory_text[i:i + max_prompt_length * 4] for i in range(0, len(memory_text), max_prompt_length * 4)]
+    if len(memory_text) == 0:
+        chunks = []
+    else:
+        chunks = [memory_text[i:i + max_prompt_length] for i in range(0, len(memory_text), max_prompt_length)]
+        if not chunks:  # This handles the case where memory_text is smaller than max_prompt_length
+            chunks = [memory_text]
 
     keyword_text = ", ".join(keywords)
     summaries = []
+    print("CHUNKS LENGTH: ", len(chunks))
     for chunk in chunks:
         summary_prompt = f"""
         Summarize the following text as concisely as possible, maintaining ALL details and chronological order.
         Focus on the following keywords: {keyword_text}.
 
+        DO NOT LIE, DO NOT GENERATE NEW CONTENT, DERIVE ONLY INFORMATION FROM THE TEXT.
         Text:
-        ---
+        --- SEGMENT ---
         {chunk}
-        ---
+        --- SEGMENT ---
         Use the following JSON format:
         {{
             "Summary": "<summary>"
@@ -396,26 +463,13 @@ def summarize_memory(memories, keywords):
         if summary:
             summaries.append(summary)
     
-    final_summary_prompt = f"""
-    Combine the following summaries into a single, concise summary that maintains ALL details.
-    Focus on the following keywords: {keyword_text}.
-
-    Text:
-    ---
-    {' '.join(summaries)}
-    ---
-    Use the following JSON format:
-    {{
-        "Summary": "<summary>"
-    }}
-    """
-    final_summary_response = system_api_endpoint_call(final_summary_prompt)
-    final_summary = parse_summary_response(final_summary_response)
+    final_summary = ' '.join(summaries)
+    print("Final Summary: ", final_summary)
 
     # Truncate the final summary if it exceeds the limit
     final_summary_text = final_summary if final_summary else ""
-    if len(final_summary_text) > max_prompt_length * 4:
-        final_summary_text = final_summary_text[:max_prompt_length * 4]
+    if len(final_summary_text) > memory_summary_char_limit:
+        final_summary_text = final_summary_text[:memory_summary_char_limit]
 
     return final_summary_text
 
@@ -448,6 +502,8 @@ def chat():
     model = endpoint.model
     context_length = endpoint.context_length
     reserved_tokens_for_response = endpoint.reserved_tokens_for_response
+    system_context_length = config.getint('system_api_endpoint', 'context_length')
+    system_reserved_tokens_for_response = config.getint('system_api_endpoint', 'reserved_tokens_for_response')
 
     if not api_url or not model:
         app.logger.error(f"Missing endpoint configuration: api_url={api_url}, model={model}")
@@ -459,29 +515,34 @@ def chat():
 
     # Calculate prompt token limit
     prompt_token_limit = context_length - reserved_tokens_for_response
-    truncation_limit = int(prompt_token_limit * 2 / 5)
-    memory_summary_limit = int(prompt_token_limit * 1 / 5)
-    latest_messages_limit = int(prompt_token_limit * 1 / 5)
+    prompt_char_limit = prompt_token_limit * 4
+    system_prompt_token_limit = system_context_length - system_reserved_tokens_for_response
+    system_prompt_char_limit = system_prompt_token_limit * 4
+    system_reserved_char_for_response = system_reserved_tokens_for_response
+    reserved_char_for_response = reserved_tokens_for_response
+    truncation_char_limit = int(prompt_char_limit * 1 / 5)
+    memory_summary_char_limit = int(prompt_char_limit * 1 / 5 - reserved_char_for_response) 
+    system_memory_summary_char_limit = int(system_prompt_char_limit * 4/5 - system_reserved_char_for_response)
 
     # Step 1: Get the latest conversation exchange
-    bot_conversation = get_bot_conversation(bot_name)
-    bot_conversation = truncate_message_history(bot_conversation)
-    conversation_text = "\n".join([f"{msg.role}: {msg.conversation}" for msg in bot_conversation])
+    latest_conversation = get_bot_conversation(bot_name, 2)
 
     latest_exchange = f"user: {user_input}"
-    if len(bot_conversation) > 0:
-        latest_exchange = f"{bot_conversation[-1].role}: {bot_conversation[-1].conversation}\n{latest_exchange}"
-
+    if len(latest_conversation) > 0:
+        latest_exchange = f"{latest_conversation[-1].role}: {latest_conversation[-1].conversation}\n{latest_exchange}"
+    print("LATEST EXCHANGE: ", latest_exchange)
     # Step 2: Extract keywords from the latest conversation
+    bot_conversation = get_bot_conversation(bot_name)
+    bot_conversation = truncate_message_history(bot_conversation, truncation_char_limit)
+    conversation_text = "\n".join([f"{msg.role}: {msg.conversation}" for msg in bot_conversation])
     keywords = extract_keywords(conversation_text, latest_exchange)
     if not keywords:
         return jsonify({'error': 'Failed to extract keywords'}), 500
 
     # Step 3: Search for related memories
     related_memories = search_memories(bot.id, keywords)
-    summarized_memory = summarize_memory(related_memories, keywords)
-
-
+    summarized_memory = summarize_memory(related_memories, keywords, system_memory_summary_char_limit, system_memory_summary_char_limit)
+    
     system_message = f"Your name is {bot_name}. Assume the role of {bot_name} and adhere to the following persona: {bot_persona}. For any formatting, use Markdown syntax. The following are related memories:\n{summarized_memory}"
     conversation_messages = [{
         'role': 'system',
@@ -524,8 +585,8 @@ def chat():
     MainConversation.create(role='assistant', conversation=response_text, timestamp=datetime.now(), bot_name=bot_name)
 
     # Step 4: Store the latest conversation exchange in memory
-    latest_exchange = f"USER:\n{user_input}\nASSISTANT:\n{response_text}"
-    store_memory(bot.id, datetime.now(), latest_exchange)
+    latest_exchange = f"ASSISTANT:\n{response_text}\nUSER:\n{user_input}"
+    store_memory(bot.id, datetime.now(), conversation_text, latest_exchange)
 
     return jsonify({'response': response_text})
 
