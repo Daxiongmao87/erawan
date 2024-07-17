@@ -29,29 +29,45 @@ document.addEventListener('DOMContentLoaded', () => {
     let selectedBot = null;
     let botToDelete = null;
 
-    async function fetchBots() {
-        try {
-            const response = await fetch('/bots');
-            const bots = await response.json();
-            botsList.innerHTML = '';
-            bots.forEach(bot => {
-                const botItem = document.createElement('div');
-                botItem.classList.add('bot-item');
-                botItem.dataset.botName = bot.name;
-                botItem.innerHTML = `
-                    <span>${bot.name}</span>
-                    <div class="bot-buttons">
-                        <button class="info-btn" data-bot-name="${bot.name}">i</button>
-                        <button class="delete-btn" data-bot-name="${bot.name}">x</button>
-                    </div>
-                `;
-                botsList.appendChild(botItem);
-            });
-            populateEndpointsSelect();
-        } catch (error) {
-            console.error('Error fetching bots:', error);
-        }
+    // Check and apply dark mode preference
+    const savedDarkMode = localStorage.getItem('darkMode');
+    if (savedDarkMode === 'enabled') {
+        document.body.classList.add('dark-mode');
+        darkModeToggle.innerHTML = '<i class="fas fa-adjust"></i>';
+    } else {
+        document.body.classList.remove('dark-mode');
+        darkModeToggle.innerHTML = '<i class="fas fa-adjust fa-flip-horizontal"></i>';
     }
+async function fetchBots() {
+    try {
+        const response = await fetch('/bots');
+        const bots = await response.json();
+        botsList.innerHTML = '';
+        bots.forEach((bot, index) => {
+            const botItem = document.createElement('div');
+            botItem.classList.add('bot-item');
+            botItem.dataset.botName = bot.name;
+            botItem.innerHTML = `
+                <span>${bot.name}</span>
+                <div class="bot-buttons">
+                    <button class="info-btn small-button" data-bot-name="${bot.name}"><i class="fas fa-info-circle"></i></i></button>
+                    <button class="delete-btn small-button" data-bot-name="${bot.name}"><i class="fa-solid fa-trash"></i></button>
+                </div>
+            `;
+            botsList.appendChild(botItem);
+            
+            // Automatically select the first bot
+            if (index === 0) {
+                botItem.classList.add('selected');
+                selectedBot = bot.name;
+                fetchChatHistory(selectedBot);
+            }
+        });
+        populateEndpointsSelect();
+    } catch (error) {
+        console.error('Error fetching bots:', error);
+    }
+}
 
     async function fetchChatHistory(botName) {
         try {
@@ -83,13 +99,16 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
 
+    // Existing event listener for dark mode toggle
     if (darkModeToggle) {
         darkModeToggle.addEventListener('click', () => {
             document.body.classList.toggle('dark-mode');
             if (document.body.classList.contains('dark-mode')) {
-                darkModeToggle.innerHTML = '<i class="fa-solid fa-sun"></i>';
+                darkModeToggle.innerHTML = '<i class="fas fa-adjust"></i>';
+                localStorage.setItem('darkMode', 'enabled'); // Save preference
             } else {
-                darkModeToggle.innerHTML = '<i class="fa-solid fa-moon"></i>';
+                darkModeToggle.innerHTML = '<i class="fas fa-adjust fa-flip-horizontal"></i>';
+                localStorage.setItem('darkMode', 'disabled'); // Save preference
             }
         });
     }
@@ -257,7 +276,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 endpointItem.innerHTML = `
                     <span>${endpoint.name}</span>
                     <div class="endpoint-buttons">
-                        <button class="delete-endpoint-btn" data-endpoint-name="${endpoint.name}">x</button>
+                        <button class="delete-endpoint-btn small-button" data-endpoint-name="${endpoint.name}"><i class="fa-solid fa-trash"></i></button>
                     </div>
                 `;
                 endpointsList.appendChild(endpointItem);
@@ -277,12 +296,12 @@ document.addEventListener('DOMContentLoaded', () => {
         const endpointToken = document.getElementById('new-endpoint-token').value;
         const contextLength = document.getElementById('new-endpoint-context-length').value;
         const reservedTokens = document.getElementById('new-endpoint-reserved-tokens').value;
-
+    
         if (!endpointName || !endpointUrl || !endpointModel || !contextLength || !reservedTokens) {
             alert('Please fill out all required fields');
             return;
         }
-
+    
         try {
             const response = await fetch('/add_api_endpoint', {
                 method: 'POST',
@@ -306,6 +325,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 document.getElementById('new-endpoint-context-length').value = '';
                 document.getElementById('new-endpoint-reserved-tokens').value = '';
                 fetchEndpoints();
+                populateEndpointsSelect(); // Update the dropdowns
             } else {
                 alert('Error adding endpoint');
             }
@@ -313,7 +333,6 @@ document.addEventListener('DOMContentLoaded', () => {
             console.error('Error adding endpoint:', error);
         }
     });
-
     closeEndpointConfigBtn.addEventListener('click', () => {
         configureEndpointsModal.style.display = 'none';
     });
@@ -360,13 +379,14 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    document.addEventListener('DOMContentLoaded', function() {
-        const menuToggle = document.getElementById('menu-toggle');
-        const container = document.getElementById('container');
-    
-        menuToggle.addEventListener('click', function() {
-            container.classList.toggle('sidebar-visible');
-        });
+    const menuToggle = document.getElementById('menu-toggle');
+    const container = document.getElementById('container');
+
+    menuToggle.addEventListener('click', function() {
+        console.log('Menu toggle clicked');
+        container.classList.toggle('sidebar-visible');
+        console.log(container.classList);  // Log to verify class is toggled
     });
+
     fetchBots();
 });

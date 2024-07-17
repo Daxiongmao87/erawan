@@ -1,4 +1,5 @@
 .venv
 config.ini
-memory.db
+bots.db
+faiss_mapping.pkl
 __pycache__

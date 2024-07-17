@@ -11,22 +11,23 @@
 </head>
 <body>
     <div id="container">
+        <button id="menu-toggle" class="menu-toggle"><i class="fas fa-bars"></i></button>
         <div id="sidebar">
-            <span>
-                <button id="dark-mode-toggle"><i class="fa-solid fa-moon"></i></button>
-                <button id="new-bot-btn">Create New Bot</button>
+            <span id="sidebar-top-row">
+                <button id="dark-mode-toggle"><i class="fas fa-adjust"></i>/button>
+                <button id="new-bot-btn"><i class="fas fa-robot"></i> New Bot</button>
             </span>
             <div id="bots-list"></div>
-            <button id="configure-endpoints-btn">Configure Endpoints</button>
+            <button id="configure-endpoints-btn"><i class="fas fa-sitemap"></i> Configure Endpoints</button>
+            
         </div>
         <div id="chat-container">
             <div id="messages"></div>
             <div id="chat-form">
                 <textarea id="user-input" placeholder="Type a message..." required></textarea>
-                <button id="send-button">Send</button>
+                <button id="send-button"><i class="fas fa-reply"></i></button>
             </div>
         </div>
-        <button id="menu-toggle" class="menu-toggle"><i class="fas fa-bars"></i></button>
     </div>
 
     <div id="new-bot-modal" class="modal">
@@ -48,10 +49,12 @@
         <div class="modal-content">
             <h3>Bot Info</h3>
             <p id="bot-persona"></p>
+            <span>
             <select id="bot-endpoint">
                 <!-- Endpoint options will be populated dynamically -->
             </select>
             <button id="close-info-btn">Close</button>
+            </span>
         </div>
     </div>
 

@@ -9,6 +9,9 @@ from werkzeug.exceptions import BadRequest
 import logging
 import time
 from sqlalchemy import func, or_
+import faiss
+import numpy as np
+import pickle
 
 # Set up logging
 logging.basicConfig(level=logging.DEBUG)
@@ -18,7 +21,7 @@ config.read('config.ini')
 
 app = Flask(__name__)
 basedir = os.path.abspath(os.path.dirname(__file__))
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + os.path.join(basedir, 'memory.db')
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + os.path.join(basedir, 'bots.db')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['DEBUG'] = True  # Enable debug mode
 db = SQLAlchemy(app)
@@ -53,6 +56,7 @@ class Bot(db.Model, CRUDMixin):
     name = db.Column(db.String(120), unique=True, nullable=False)
     persona = db.Column(db.Text, nullable=False)
     endpoint_name = db.Column(db.String(120), nullable=False)
+    inner_monologue = db.Column(db.Integer, default=0)
 
 class Memory(db.Model, CRUDMixin):
     id = db.Column(db.Integer, primary_key=True)
@@ -83,13 +87,132 @@ class ApiEndpoint(db.Model, CRUDMixin):
     context_length = db.Column(db.Integer, nullable=False)
     reserved_tokens_for_response = db.Column(db.Integer, nullable=False)
 
+### RAG
 
-db.create_all()
+faiss_indices = {}
+faiss_mappings = {}
 
-def system_api_endpoint_call(prompt):
-    api_url = config.get('system_api_endpoint', 'api_url')
-    token = config.get('system_api_endpoint', 'token')
-    model = config.get('system_api_endpoint', 'model')
+def initialize_faiss_for_bot(bot_id, dimension):
+    if bot_id not in faiss_indices:
+        faiss_indices[bot_id] = faiss.IndexFlatL2(dimension)
+        faiss_mappings[bot_id] = {}
+
+dimension = config.getint('embed_api_endpoint', 'dimension')
+
+# Initialize FAISS indices for existing bots
+bots = Bot.query.all()
+for bot in bots:
+    initialize_faiss_for_bot(bot.id, dimension)
+
+# Load FAISS mapping from disk if exists
+if os.path.exists('faiss_mapping.pkl'):
+    with open('faiss_mapping.pkl', 'rb') as f:
+        faiss_mapping = pickle.load(f)
+
+def save_faiss_mapping():
+    with open('faiss_mapping.pkl', 'wb') as f:
+        pickle.dump(faiss_mapping, f)
+
+def get_embeddings(text):
+    print("Get embeddings for: ", text)
+    api_url = config.get('embed_api_endpoint', 'api_url')
+    token = config.get('embed_api_endpoint', 'token')
+    model = config.get('embed_api_endpoint', 'model')
+    max_tokens = config.getint('embed_api_endpoint', 'context_length') - config.getint('embed_api_endpoint', 'reserved_tokens_for_response')  # Maximum tokens for the model
+
+    headers = {'Content-Type': 'application/json'}
+    if token:
+        headers['Authorization'] = f'Bearer {token}'
+
+    # Truncate the input text to ensure it doesn't exceed the maximum tokens
+    truncated_text = text[:max_tokens]
+
+    json_data = {
+        "input": truncated_text,
+        "model": model
+    }
+
+    try:
+        response = requests.post(api_url, headers=headers, json=json_data)
+        response.raise_for_status() 
+        response_json = response.json()
+        embedding = response_json.get('data', [{}])[0].get('embedding')
+        if embedding is None:
+            raise ValueError("Embedding not found in response")
+        #print(f"Generated Embedding: {embedding}")
+        return np.array(embedding, dtype=np.float32)
+    except requests.exceptions.RequestException as e:
+        logging.error(f"Failed to get embeddings: {e} - Response text: {response.text}")
+        return None
+    except ValueError as e:
+        logging.error(f"Error in API response: {e}")
+        return None
+
+
+def store_memory_faiss(bot_id, text, keywords):
+    # Store embedding for the complete text
+    text_embedding = get_embeddings(text)
+    if text_embedding is not None:
+        faiss_index.add(np.array([text_embedding]))
+        faiss_index_id = faiss_index.ntotal - 1
+        memory = Memory.create(bot_id=bot_id, timestamp=datetime.now(), content=text)
+        faiss_mapping[memory.id] = faiss_index_id
+        
+        # Store embeddings for each keyword
+        print("Keywords: ", keywords)
+        for keyword in keywords:
+            print("Saving embedding for: ", keyword)
+            keyword_embedding = get_embeddings(keyword)
+            if keyword_embedding is not None:
+                faiss_index.add(np.array([keyword_embedding]))
+                keyword_faiss_id = faiss_index.ntotal - 1
+                faiss_mapping[f"{memory.id}_keyword_{keyword}"] = keyword_faiss_id
+        
+        save_faiss_mapping()
+        return memory
+    return None
+
+
+
+def search_memory_faiss(query, k=10):
+    query_embedding = get_embeddings(query)
+    if query_embedding is not None:
+        print(f"Query Embedding: {query_embedding}")  # Add this line
+        distances, indices = faiss_index.search(np.array([query_embedding]), k)
+        print(f"FAISS Search - distances: {distances}, indices: {indices}")  # Add this line
+        return indices[0] if np.any(indices >= 0) else []
+    else:
+        print("Query came back empty")
+    return []
+
+
+def get_memory_by_index(index):
+    for memory_id, faiss_id in faiss_mapping.items():
+        if faiss_id == index:
+            memory = Memory.query.get(memory_id)
+            return memory.content
+    return None
+
+def combine_contexts(user_input, retrieved_texts):
+    combined_context = user_input + "\n\n" + "\n\n".join(retrieved_texts)
+    return combined_context
+
+def delete_memory(memory_id):
+    if memory_id in faiss_mapping:
+        faiss_id = faiss_mapping.pop(memory_id)
+        # Here we need to recreate the FAISS index without the deleted entry
+        all_embeddings = [faiss_index.reconstruct(i) for i in range(faiss_index.ntotal) if i != faiss_id]
+        faiss_index.reset()
+        faiss_index.add(np.array(all_embeddings))
+        Memory.query.filter_by(id=memory_id).delete()
+        save_faiss_mapping()
+        db.session.commit()
+
+
+def embed_api_endpoint_call(prompt):
+    api_url = config.get('embed_api_endpoint', 'api_url')
+    token = config.get('embed_api_endpoint', 'token')
+    model = config.get('embed_api_endpoint', 'model')
 
     headers = {'Content-Type': 'application/json'}
     if token:
@@ -107,6 +230,7 @@ def system_api_endpoint_call(prompt):
         'response_format': {
             'type': 'json_object'
         },
+        'stream': False,
         'temperature': 1,
         'top_p': 1
     }
@@ -115,10 +239,68 @@ def system_api_endpoint_call(prompt):
         response = requests.post(api_url, headers=headers, json=json_data)
         print(f"RESPONSE: {response.text}")
         response.raise_for_status()
-        return response.json()['choices'][0]['message']['content']
+        print("FINDING MESSAGE FIELD")
+        print(response.json())
+        response_text = find_message_content(response.json())
+        print(f"RESPONSE TEXT: ", response_text)
+        return response_text
     except requests.exceptions.RequestException as e:
         logging.error(f"Failed to call System API Endpoint: {e}")
         return None
+
+###
+
+def extract_keywords_with_model(conversation_text, latest_exchange):
+    max_tokens = config.getint('system_api_endpoint', 'context_length') - config.getint('system_api_endpoint', 'reserved_tokens_for_response')
+    max_tokens_conversation = int(max_tokens * 0.9)
+    conversation_text=conversation_text[:max_tokens_conversation]
+    prompt = f"""
+    Extract relevant keywords from the following text.
+    Focus on the latest exchange for keywords.
+    
+    Conversation History:
+    {conversation_text}
+    
+    Latest Exchange:
+    {latest_exchange}
+    
+    Respond with a JSON object in the format:
+    {{
+        "keywords": ["<keyword1>", "<keyword2>", "<keyword3>", ...]
+    }}
+    """
+    
+    api_url = config.get('system_api_endpoint', 'api_url')
+    token = config.get('system_api_endpoint', 'token')
+    model = config.get('system_api_endpoint', 'model')
+    
+    headers = {'Content-Type': 'application/json'}
+    if token:
+        headers['Authorization'] = f'Bearer {token}' 
+
+    json_data = {
+        "model": model,
+        "messages": [{"role": "system", "content": prompt}],
+        "max_tokens": config.getint('system_api_endpoint', 'reserved_tokens_for_response')
+    }
+
+    try:
+        response = requests.post(api_url, headers=headers, json=json_data)
+        response.raise_for_status()
+        
+        response_json = response.json()
+        keywords = response_json.get('choices', [{}])[0].get('message', {}).get('content', '')
+        print("Keywords: ", json.loads(keywords).get('keywords', []))
+        return json.loads(keywords).get('keywords', [])
+    except requests.exceptions.RequestException as e:
+        logging.error(f"Failed to extract keywords: {e} - Response text: {response.text}")
+        return []
+    except json.JSONDecodeError as e:
+        logging.error(f"Error parsing the response JSON: {e}")
+        return []
+
+
+db.create_all()
 
 @app.route('/')
 def index():
@@ -135,6 +317,7 @@ def create_bot():
     bot_name = data.get('name')
     bot_persona = data.get('persona')
     endpoint_name = data.get('endpoint_name')
+    inner_monologue = 1 if data.get('inner_monologue', False) else 0  # Use 1 or 0
 
     if not bot_name or not bot_persona or not endpoint_name:
         return jsonify({'error': 'Bot name, persona, and endpoint_name are required'}), 400
@@ -143,8 +326,8 @@ def create_bot():
     if existing_bot:
         return jsonify({'error': 'Bot with this name already exists'}), 400
 
-    bot = Bot.create(name=bot_name, persona=bot_persona, endpoint_name=endpoint_name)
-    return jsonify({'name': bot.name, 'persona': bot.persona, 'endpoint_name': bot.endpoint_name})
+    bot = Bot.create(name=bot_name, persona=bot_persona, endpoint_name=endpoint_name, inner_monologue=inner_monologue)
+    return jsonify({'name': bot.name, 'persona': bot.persona, 'endpoint_name': bot.endpoint_name, 'inner_monologue': bool(bot.inner_monologue)})
 
 @app.route('/update_bot_api_endpoint', methods=['POST'])
 def update_bot_api_endpoint():
@@ -196,6 +379,22 @@ def create_api_endpoint():
 
     endpoint = ApiEndpoint.create(name=name, api_url=api_url, model=model, token=token, context_length=context_length, reserved_tokens_for_response=reserved_tokens_for_response)
     return jsonify({'name': endpoint.name, 'api_url': endpoint.api_url, 'model': endpoint.model, 'context_length': endpoint.context_length, 'reserved_tokens_for_response': endpoint.reserved_tokens_for_response})
+
+@app.route('/update_inner_monologue', methods=['POST'])
+def update_inner_monologue():
+    data = request.json
+    bot_name = data.get('name')
+    inner_monologue = data.get('inner_monologue')
+
+    if not bot_name or inner_monologue is None:
+        return jsonify({'error': 'Bot name and inner_monologue status are required'}), 400
+
+    bot = Bot.query.filter_by(name=bot_name).first()
+    if not bot:
+        return jsonify({'error': 'Bot not found'}), 404
+
+    bot.update(inner_monologue=1 if inner_monologue else 0)
+    return jsonify({'message': 'Inner monologue status updated successfully'})
 
 
 @app.route('/bot_info', methods=['GET'])
@@ -326,11 +525,13 @@ def extract_keywords(text, latest_exchange):
     NOTE: INCLUDE AS MANY SYNONYMS OR RELATED WORDS FOR INCREASE SEARCH RELIABILITY.
     Respond with a JSON object in the format:
     {{
-        "keywords": ["<keyword1>", "<keyword2>", "<keyword3>", "<etc> ..."]
+        "categories": ["<category1>", "<category2>", "<category3>", "etc ..."], # Contextually-complete categories IN ORDER OF SIGNIFICANCE
+        "subjects": ["<subject1>", "<subject2>", "<subject3>", "etc ..."], # Contextually-complete subjects IN ORDER OF SIGNIFICANCE
+        "keywords": ["<keyword1>", "<keyword2>", "<keyword3>", "<etc> ..."] # Contextually-complete keywords IN ORDER OF SIGNIFICANCE
     }}
     """
     print(f"Prompt: {prompt}")
-    response = system_api_endpoint_call(prompt)
+    response = embed_api_endpoint_call(prompt)
     print("KEYWORDS RESPONSE: ", response)
 
     if response is None:
@@ -338,7 +539,7 @@ def extract_keywords(text, latest_exchange):
 
     try:
         response_json = json.loads(response)
-        keywords = response_json.get("keywords", [])
+        keywords = response_json.get("categories", []) + response_json.get("subjects", []) + response_json.get("keywords", [])
     except json.JSONDecodeError:
         print("Invalid JSON response:", response)
         return []
@@ -374,7 +575,7 @@ def store_memory(bot_id, timestamp, conversation_text, content):
         ]
     }}
     """
-    response = system_api_endpoint_call(prompt)
+    response = embed_api_endpoint_call(prompt)
     print(f"Store Memory Response: {response}")
     try:
         response_json = json.loads(response)
@@ -392,6 +593,7 @@ def store_memory(bot_id, timestamp, conversation_text, content):
         keywords.extend(new_keywords)
     # Flatten the keywords list and ensure unique keywords
     unique_keywords = set(keywords)
+    print("TOTAL KEYWORDS: ", unique_keywords)
     for keyword in unique_keywords:
         Keyword.create(memory_id=memory.id, keyword=keyword)
 
@@ -427,9 +629,9 @@ def parse_summary_response(response):
 
 def summarize_memory(memories, keywords, system_memory_summary_char_limit, memory_summary_char_limit):
     memory_text = "\n".join([memory.content for memory in memories])
-    api_url = config.get('system_api_endpoint', 'api_url')
-    context_length = config.getint('system_api_endpoint', 'context_length')
-    reserved_tokens_for_response = config.getint('system_api_endpoint', 'reserved_tokens_for_response')
+    api_url = config.get('embed_api_endpoint', 'api_url')
+    context_length = config.getint('embed_api_endpoint', 'context_length')
+    reserved_tokens_for_response = config.getint('embed_api_endpoint', 'reserved_tokens_for_response')
     max_prompt_length = system_memory_summary_char_limit
 
     # Split memory text into manageable chunks
@@ -458,7 +660,7 @@ def summarize_memory(memories, keywords, system_memory_summary_char_limit, memor
             "Summary": "<summary>"
         }}
         """
-        summary_response = system_api_endpoint_call(summary_prompt)
+        summary_response = embed_api_endpoint_call(summary_prompt)
         summary = parse_summary_response(summary_response)
         if summary:
             summaries.append(summary)
@@ -473,6 +675,20 @@ def summarize_memory(memories, keywords, system_memory_summary_char_limit, memor
 
     return final_summary_text
 
+def find_message_content(data):
+    if isinstance(data, dict):
+        if 'message' in data and isinstance(data['message'], dict) and 'content' in data['message']:
+            return data['message']['content']
+        for key, value in data.items():
+            result = find_message_content(value)
+            if result:
+                return result
+    elif isinstance(data, list):
+        for item in data:
+            result = find_message_content(item)
+            if result:
+                return result
+    return None
 
 @app.route('/chat', methods=['POST'])
 def chat():
@@ -502,8 +718,6 @@ def chat():
     model = endpoint.model
     context_length = endpoint.context_length
     reserved_tokens_for_response = endpoint.reserved_tokens_for_response
-    system_context_length = config.getint('system_api_endpoint', 'context_length')
-    system_reserved_tokens_for_response = config.getint('system_api_endpoint', 'reserved_tokens_for_response')
 
     if not api_url or not model:
         app.logger.error(f"Missing endpoint configuration: api_url={api_url}, model={model}")
@@ -513,37 +727,35 @@ def chat():
     if token:
         headers['Authorization'] = f'Bearer {token}'
 
-    # Calculate prompt token limit
     prompt_token_limit = context_length - reserved_tokens_for_response
     prompt_char_limit = prompt_token_limit * 4
-    system_prompt_token_limit = system_context_length - system_reserved_tokens_for_response
-    system_prompt_char_limit = system_prompt_token_limit * 4
-    system_reserved_char_for_response = system_reserved_tokens_for_response
-    reserved_char_for_response = reserved_tokens_for_response
-    truncation_char_limit = int(prompt_char_limit * 1 / 5)
-    memory_summary_char_limit = int(prompt_char_limit * 1 / 5 - reserved_char_for_response) 
-    system_memory_summary_char_limit = int(system_prompt_char_limit * 4/5 - system_reserved_char_for_response)
 
-    # Step 1: Get the latest conversation exchange
     latest_conversation = get_bot_conversation(bot_name, 2)
 
     latest_exchange = f"user: {user_input}"
     if len(latest_conversation) > 0:
         latest_exchange = f"{latest_conversation[-1].role}: {latest_conversation[-1].conversation}\n{latest_exchange}"
     print("LATEST EXCHANGE: ", latest_exchange)
-    # Step 2: Extract keywords from the latest conversation
-    bot_conversation = get_bot_conversation(bot_name)
-    bot_conversation = truncate_message_history(bot_conversation, truncation_char_limit)
-    conversation_text = "\n".join([f"{msg.role}: {msg.conversation}" for msg in bot_conversation])
-    keywords = extract_keywords(conversation_text, latest_exchange)
-    if not keywords:
-        return jsonify({'error': 'Failed to extract keywords'}), 500
 
-    # Step 3: Search for related memories
-    related_memories = search_memories(bot.id, keywords)
-    summarized_memory = summarize_memory(related_memories, keywords, system_memory_summary_char_limit, system_memory_summary_char_limit)
-    
-    system_message = f"Your name is {bot_name}. Assume the role of {bot_name} and adhere to the following persona: {bot_persona}. For any formatting, use Markdown syntax. The following are related memories:\n{summarized_memory}"
+    bot_conversation = get_bot_conversation(bot_name)
+    bot_conversation = truncate_message_history(bot_conversation, int(prompt_char_limit * 1 / 5))
+    conversation_text = "\n".join([f"{msg.role}: {msg.conversation}" for msg in bot_conversation])
+
+    # Extract keywords using the model
+    keywords = extract_keywords_with_model(conversation_text, latest_exchange)
+    keyword_query = " ".join(keywords) if keywords else ""
+
+    # Search related memories using FAISS
+    related_memories_indices = search_memory_faiss(keyword_query)
+    if related_memories_indices is None:
+        related_memories_indices = []
+
+    related_memories = [get_memory_by_index(index) for index in related_memories_indices if index != -1 and get_memory_by_index(index) is not None]
+
+    # Combine context for response generation
+    combined_context = combine_contexts(user_input, related_memories) if related_memories else user_input
+
+    system_message = f"Your name is {bot_name}. Assume the role of {bot_name} and adhere to the following persona: {bot_persona}. For any formatting, use Markdown syntax. The following are related memories:\n{combined_context}"
     conversation_messages = [{
         'role': 'system',
         'content': system_message
@@ -559,7 +771,55 @@ def chat():
         'role': 'user',
         'content': user_input
     })
-    print(f"CONVERSATION MESSAGES: {conversation_messages}")
+
+    # If inner_monologue is enabled, add the inner monologue step
+    if bot.inner_monologue:
+        try:
+            monologue_prompt = f"""
+            Analyze the conversation and the user's latest response.  Provide your thoughts in the following sections: ANALYSIS, {bot_name}'S THOUGHTS, {bot_name}'S RESPONSE INTENT.
+            
+            CONVERSATION TEXT:
+            --- SEGMENT ---
+            {combined_context}
+            --- SEGMENT ---
+
+            USER'S RESPONSE:
+            --- SEGMENT ---
+            {user_input}
+            --- SEGMENT ---
+            """
+            monologue_messages = [{
+                'role': 'system',
+                'content': system_message
+            }]
+            for message in bot_conversation:
+                monologue_messages.append({
+                    'role': message.role,
+                    'content': message.conversation
+                })
+            monologue_messages.append({
+                'role': 'user',
+                'content': user_input
+            })
+            json_data = {
+                'model': model,
+                'stream': False,
+                'temperature': 1,
+                'top_p': 1,
+                'messages': monologue_messages,
+                'max_tokens': reserved_tokens_for_response
+            }
+            monologue_response = make_api_call_with_retries(api_url, headers, json_data)
+            inner_monologue_response = find_message_content(monologue_response)
+            conversation_messages.append({
+                'role': 'assistant',
+                'content': f"**Inner Monologue:** {inner_monologue_response}"
+            })
+            json_data['messages'] = conversation_messages  # Update json_data with the inner monologue
+        except (requests.exceptions.RequestException, ValueError, json.decoder.JSONDecodeError) as e:
+            app.logger.error(f"Error during inner monologue API call: {e}")
+            return jsonify({'error': str(e)}), 500
+
     json_data = {
         'model': model,
         'stream': False,
@@ -569,14 +829,9 @@ def chat():
         'max_tokens': reserved_tokens_for_response
     }
     try:
-        app.logger.debug(f"API request content: {json_data}")
         response = make_api_call_with_retries(api_url, headers, json_data)
-        
-        app.logger.debug(f"API response content: {response}")
-
         chatbot_response = response
-        response_text = chatbot_response.get('choices', [{}])[0].get('message', {}).get('content', '')
-
+        response_text = find_message_content(chatbot_response)
     except (requests.exceptions.RequestException, ValueError, json.decoder.JSONDecodeError) as e:
         app.logger.error(f"Error during API call: {e}")
         return jsonify({'error': str(e)}), 500
@@ -584,9 +839,12 @@ def chat():
     MainConversation.create(role='user', conversation=user_input, timestamp=datetime.now(), bot_name=bot_name)
     MainConversation.create(role='assistant', conversation=response_text, timestamp=datetime.now(), bot_name=bot_name)
 
-    # Step 4: Store the latest conversation exchange in memory
     latest_exchange = f"ASSISTANT:\n{response_text}\nUSER:\n{user_input}"
-    store_memory(bot.id, datetime.now(), conversation_text, latest_exchange)
+    keywords_second = extract_keywords_with_model(conversation_text, latest_exchange)
+    
+    print ("KEYWORDS: ", keywords + keywords_second)
+    exit
+    store_memory_faiss(bot.id, latest_exchange, keywords + keywords_second)
 
     return jsonify({'response': response_text})
 

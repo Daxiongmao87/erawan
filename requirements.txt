@@ -9,3 +9,5 @@ itsdangerous==2.0.1
 click==8.0.3
 SQLAlchemy==1.4.27
 pyyaml
+faiss-cpu
+numpy

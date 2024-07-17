@@ -16,17 +16,18 @@ body {
     height: 100%;
     background: white;
     box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
-    border-radius: 8px;
+    border-radius: 5px;
     overflow: hidden;
     position: relative;
 }
 
 #sidebar {
-    width: 25%;
+    width: 256px;
     border-right: 1px solid #ddd;
     display: flex;
     flex-direction: column;
     padding: 20px;
+    background-color: white;
     transition: transform 0.3s ease;
 }
 
@@ -34,31 +35,69 @@ body {
     width: 75%;
     display: flex;
     flex-direction: column;
-    padding: 20px;
+    padding: 19px;
 }
 
-#new-bot-btn, #send-button, #dark-mode-toggle {
-    padding: 10px;
-    margin-bottom: 20px;
+button {
+    height: 48px;
+    min-width: 48px;
     background-color: #007BFF;
     color: white;
     border: none;
     border-radius: 5px;
     cursor: pointer;
     float: right;
+    font-weight: bold;
+    padding: 10px;
+}
+::-webkit-scrollbar {
+    width: 16px;
+}
+
+::-webkit-scrollbar-track {
+    box-shadow: inset 0 0 16px 16px transparent;
+    border-radius: 5px;
+    border: solid 5px transparent;
+}
+
+::-webkit-scrollbar-thumb {
+    box-shadow: inset 0 0 16px 16px #007BFF;
+    min-height: 64px;
+    border-radius: 16px;
+    border: solid 5px transparent;
+
+}
+
+
+.small-button {
+    height: 32px;
+    min-width: 32px;
+    width: 32px;
+    padding: 0;
+    margin: 2px;
+}
+
+button:hover {
+    background-color: #469fff;
+}
+
+#sidebar-top-row {
+    margin-top: 4px;
+    margin-bottom: 24px;
 }
 
 #new-bot-btn {
-    width: 89%;
+    width: 160px;
 }
 
 #send-button {
-    height: 40px;
-    margin-top: 1px;
+    height: 48px;
+    margin-top: 20px;
 }
 
+
 #dark-mode-toggle {
-    width: 10%;
+    width: 48px;
     float: left;
     margin-right: 1%;
     align-items: center;
@@ -68,12 +107,14 @@ body {
 #bots-list {
     flex: 1;
     overflow-y: auto;
+    bottom:3px;
 }
 
 .bot-item {
     display: flex;
     justify-content: space-between;
     align-items: center;
+    height: 48px;
     padding: 10px;
     border: 1px solid #ddd;
     border-radius: 5px;
@@ -84,6 +125,7 @@ body {
 .bot-item.selected {
     background-color: #ffe0b2;
     color: rgb(0, 0, 0);
+    font-weight: bold;
 }
 
 .bot-buttons {
@@ -91,44 +133,35 @@ body {
     gap: 5px;
 }
 
-.bot-buttons button {
-    background: none;
-    border: none;
-    cursor: pointer;
-}
-
-.bot-buttons .info-btn {
-    color: #007BFF;
-}
-
-.bot-buttons .delete-btn {
+.bot-buttons .delete-btn, .delete-endpoint-btn {
     color: #FF0000;
 }
 
 #messages {
-    height: calc(100% - 80px);
+    height: calc(100% - 71px);
     overflow-y: auto;
     border: 1px solid #ddd;
-    border-radius: 8px;
-    padding: 10px;
+    border-radius: 5px;
+    padding: 0px 0px 0px 16px;
     background-color: #fff;
-    margin-bottom: 20px;
 }
 
 #chat-form {
     display: flex;
     width: 100%;
-    height: 39px;
+    height: 48px;
 }
 
 #user-input {
-    margin-right: 4px;
+    margin-right: 16px;
     flex: 1;
-    padding: 10px;
+    padding: 12px;
     border: 1px solid #ddd;
     border-radius: 5px;
     resize: vertical;
-    height: 19px;
+    font-size: 20px;
+    height: 24px;
+    margin-top: 20px;
 }
 
 button[type="submit"] {
@@ -162,7 +195,7 @@ button[type="submit"] {
 .message {
     margin: 10px 0;
     padding: 10px;
-    border-radius: 8px;
+    border-radius: 5px;
 }
 
 .user-message {
@@ -196,12 +229,15 @@ button[type="submit"] {
 
 .modal-content {
     background-color: #fff;
-    padding: 20px;
-    border-radius: 8px;
+    border-radius: 5px;
     width: 90%;
     max-width: 400px;
     text-align: center;
     box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+}
+
+div.modal-content {
+    padding: 19px;
 }
 
 .modal-content h3 {
@@ -217,7 +253,7 @@ button[type="submit"] {
     margin-bottom: 10px;
     border: 1px solid #ddd;
     border-radius: 5px;
-    font-size: 1em;
+
 }
 
 .modal-buttons {
@@ -225,23 +261,8 @@ button[type="submit"] {
     justify-content: space-between;
 }
 
-.modal-content button {
-    padding: 10px 20px;
-    margin: 10px 5px;
-    background-color: #007BFF;
-    color: white;
-    border: none;
-    border-radius: 5px;
-    cursor: pointer;
-    font-size: 1em;
-}
-
 .modal-content button#cancel-create-btn {
     background-color: #FF0000;
-}
-
-.modal-content button#close-info-btn {
-    background-color: #007BFF;
 }
 
 .modal-content button#cancel-delete-btn {
@@ -250,8 +271,8 @@ button[type="submit"] {
 
 #configure-endpoints-btn {
     padding: 10px;
+    height: 48px;
     margin-top: 20px;
-    background-color: #28a745;
     color: white;
     border: none;
     border-radius: 5px;
@@ -315,7 +336,20 @@ body.dark-mode {
     background-color: #121212;
     color: #e0e0e0;
 }
-
+body.dark-mode h1, body.dark-mode h2, body.dark-mode h3 {
+    color: #e0e0e0;
+}
+body.dark-mode .small-button {
+    background-color: #004895;
+}
+body.dark-mode textarea {
+    background-color: #0e0e0e;
+    color: #e0e0e0;
+}
+body.dark-mode input {
+    background-color: #0e0e0e;
+    color: #e0e0e0;
+}
 body.dark-mode #container {
     background-color: #1e1e1e;
     box-shadow: 0 0 10px rgba(255, 255, 255, 0.1);
@@ -323,6 +357,11 @@ body.dark-mode #container {
 
 body.dark-mode #sidebar {
     border-right: 1px solid #333;
+    background-color: #1e1e1e;
+}
+
+body.dark-mode .bot-buttons .delete-btn, body.dark-mode .delete-endpoint-btn {
+    color: #b90000;
 }
 
 body.dark-mode #messages {
@@ -330,25 +369,53 @@ body.dark-mode #messages {
 }
 
 body.dark-mode .message.user-message {
-    background-color: #1976d2;
+    background-color: #0d355c;
 }
 
 body.dark-mode .message.bot-message {
-    background-color: #d32f2f;
+    background-color: #681616;
+}
+
+body.dark-mode button {
+    background-color: #004895;
+    color: #e0e0e0;
+}
+
+body.dark-mode button:hover {
+    background-color: #0062ca;
+}
+
+body.dark-mode .bot-item.selected {
+    background-color: #681616;
+    color: #e0e0e0;
+}
+
+code {
+    text-wrap: pretty;
+}
+
+body.dark-mode .modal-content {
+    background-color: #1e1e1e;
+    color: #e0e0e0;
+}
+
+body.dark-mode ::-webkit-scrollbar-thumb {
+    box-shadow: inset 0 0 16px 16px #004895; 
 }
 
 .menu-toggle {
     display: none;
     position: absolute;
-    top: 10px;
-    left: 10px;
+    top: 25px;
     background-color: #007BFF;
+    width: 48px;
+    height: 48px;
     color: white;
     border: none;
     padding: 10px;
     border-radius: 5px;
     cursor: pointer;
-    z-index: 1001;
+    z-index: 999;
 }
 
 /* Responsive Styles */
@@ -361,23 +428,45 @@ body.dark-mode .message.bot-message {
         width: 250px;
         position: fixed;
         top: 0;
-        left: 0;
-        height: 100%;
-        background-color: white;
+        left: 20px;
+        bottom: 0;
         z-index: 1000;
         transform: translateX(-100%);
+        opacity: 0;
+        transition: transform 0.3s ease, opacity 0.3s ease;
     }
 
+    .sidebar-visible #sidebar {
+        transform: translateX(-24px);
+        opacity: 1;
+    }
+    .menu-toggle {
+        opacity: 0.15;
+    }
+    .menu-toggle:hover {
+        opacity: 0.75;
+    }
+
+    .sidebar-visible .menu-toggle {
+        opacity: 1;
+    }
     #chat-container {
         width: 100%;
     }
 
     #menu-toggle {
         display: block;
+        left: 25px;
+        transform: translateX(0%);
+        transition: transform 0.3s ease;
+    }
+
+    .sidebar-visible #menu-toggle {
+        transform: translateX(267px);
     }
 
     #messages {
-        height: calc(100% - 60px);
+        height: calc(100% - 71px);
     }
 }
 
@@ -394,8 +483,4 @@ body.dark-mode .message.bot-message {
     #new-bot-btn, #send-button, #dark-mode-toggle {
         padding: 5px;
     }
-}
-
-.sidebar-visible #sidebar {
-    transform: translateX(0);
 }
