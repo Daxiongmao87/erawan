@@ -89,20 +89,13 @@ class ApiEndpoint(db.Model, CRUDMixin):
 
 ### RAG
 
-faiss_indices = {}
-faiss_mappings = {}
-
-def initialize_faiss_for_bot(bot_id, dimension):
-    if bot_id not in faiss_indices:
-        faiss_indices[bot_id] = faiss.IndexFlatL2(dimension)
-        faiss_mappings[bot_id] = {}
+def initialize_faiss(dimension):
+    index = faiss.IndexFlatL2(dimension)
+    return index
 
 dimension = config.getint('embed_api_endpoint', 'dimension')
-
-# Initialize FAISS indices for existing bots
-bots = Bot.query.all()
-for bot in bots:
-    initialize_faiss_for_bot(bot.id, dimension)
+faiss_index = initialize_faiss(dimension)
+faiss_mapping = {}
 
 # Load FAISS mapping from disk if exists
 if os.path.exists('faiss_mapping.pkl'):
