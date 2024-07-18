@@ -89,22 +89,24 @@ class ApiEndpoint(db.Model, CRUDMixin):
 
 ### RAG
 
-def initialize_faiss(dimension):
-    index = faiss.IndexFlatL2(dimension)
-    return index
-
 dimension = config.getint('embed_api_endpoint', 'dimension')
-faiss_index = initialize_faiss(dimension)
-faiss_mapping = {}
+faiss_indices = {}
+faiss_mappings = {}
 
-# Load FAISS mapping from disk if exists
-if os.path.exists('faiss_mapping.pkl'):
-    with open('faiss_mapping.pkl', 'rb') as f:
-        faiss_mapping = pickle.load(f)
+def initialize_faiss_for_bot(bot_id, dimension):
+    if bot_id not in faiss_indices:
+        print(f"Initializing FAISS for bot {bot_id}")
+        faiss_indices[bot_id] = faiss.IndexFlatL2(dimension)
+        faiss_mappings[bot_id] = {}
+
+# Initialize FAISS indices for existing bots
+bots = Bot.query.all()
+for bot in bots:
+    initialize_faiss_for_bot(bot.id, dimension)
 
 def save_faiss_mapping():
     with open('faiss_mapping.pkl', 'wb') as f:
-        pickle.dump(faiss_mapping, f)
+        pickle.dump(faiss_mappings, f)
 
 def get_embeddings(text):
     print("Get embeddings for: ", text)
@@ -141,46 +143,39 @@ def get_embeddings(text):
         logging.error(f"Error in API response: {e}")
         return None
 
-
 def store_memory_faiss(bot_id, text, keywords):
-    # Store embedding for the complete text
+    initialize_faiss_for_bot(bot_id, dimension)  # Ensures an index is there
     text_embedding = get_embeddings(text)
     if text_embedding is not None:
-        faiss_index.add(np.array([text_embedding]))
-        faiss_index_id = faiss_index.ntotal - 1
-        memory = Memory.create(bot_id=bot_id, timestamp=datetime.now(), content=text)
-        faiss_mapping[memory.id] = faiss_index_id
-        
+        index = faiss_indices[bot_attributes[bot_id]]
+        index.add(np.array([text_embedding]))
+        faiss_index_id = index.ntotal - 1
+        faiss_mappings[bot_id][memory.id] = faiss_index_id
+        print(f"Memory {memory.id} added to FAISS for bot {bot_id}")
+
         # Store embeddings for each keyword
         print("Keywords: ", keywords)
         for keyword in keywords:
             print("Saving embedding for: ", keyword)
             keyword_embedding = get_embeddings(keyword)
             if keyword_embedding is not None:
-                faiss_index.add(np.array([keyword_embedding]))
-                keyword_faiss_id = faiss_index.ntotal - 1
-                faiss_mapping[f"{memory.id}_keyword_{keyword}"] = keyword_faiss_id
-        
+                faiss_indices[bot_id].add(np.array([keyword_embedding]))
+                keyword_faiss_id = faiss_indices[bot_id].ntotal - 1
+                faiss_mappings[bot_id][f"{memory.id}_keyword_{keyword}"] = keyword_faiss_id
+
         save_faiss_mapping()
         return memory
     return None
 
-
-
-def search_memory_faiss(query, k=10):
+def search_memory_faiss(bot_id, query, k=10):
     query_embedding = get_embeddings(query)
     if query_embedding is not None:
-        print(f"Query Embedding: {query_embedding}")  # Add this line
-        distances, indices = faiss_index.search(np.array([query_embedding]), k)
-        print(f"FAISS Search - distances: {distances}, indices: {indices}")  # Add this line
+        distances, indices = faiss_indices[bot_id].search(np.array([query_embedding]), k)
         return indices[0] if np.any(indices >= 0) else []
-    else:
-        print("Query came back empty")
     return []
 
-
-def get_memory_by_index(index):
-    for memory_id, faiss_id in faiss_mapping.items():
+def get_memory_by_index(bot_id, index):
+    for memory_id, faiss_id in faiss_mappings[bot_id].items():
         if faiss_id == index:
             memory = Memory.query.get(memory_id)
             return memory.content
@@ -320,6 +315,7 @@ def create_bot():
         return jsonify({'error': 'Bot with this name already exists'}), 400
 
     bot = Bot.create(name=bot_name, persona=bot_persona, endpoint_name=endpoint_name, inner_monologue=inner_monologue)
+    initialize_faiss_for_bot(bot.id, dimension)
     return jsonify({'name': bot.name, 'persona': bot.persona, 'endpoint_name': bot.endpoint_name, 'inner_monologue': bool(bot.inner_monologue)})
 
 @app.route('/update_bot_api_endpoint', methods=['POST'])
