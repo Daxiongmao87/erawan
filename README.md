@@ -11,11 +11,9 @@ The name "Erawan" is inspired by the mythological white elephant known for its w
 - **Bot Personalization**: Each bot has a customizable persona that shapes its responses and behavior.
 - **Contextual Conversations**: Bots remember previous interactions, allowing for coherent and contextually relevant conversations.
 - **Keyword-Based Memory Retrieval**: Enhances bots' responses by retrieving relevant memories based on extracted keywords.
-- **Conversation History**: Users can view past chats with a specific bot, enabling them to continue conversations seamlessly.
 - **API Endpoint Management**: Supports dynamic updates to the API endpoints used by the bots, ensuring up-to-date and effective response generation.
 - **Inner Monologue Feature**: Allows bots to internally analyze and reflect on conversations before responding, leading to more thoughtful replies.
 - **Responsive Design**: Web-based interface accessible from any device with an internet connection.
-- **Error Handling and Reliability**: Includes mechanisms to handle errors and retry API calls, ensuring a stable user experience.
 
 ## Roadmap Features
 
