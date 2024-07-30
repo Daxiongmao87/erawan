@@ -30,7 +30,7 @@ To get started with 🐘Erawan, follow these steps:
 
 1. **Clone the Repository**:
    ```sh
-   git clone https://github.com/yourusername/erawan.git
+   git clone https://github.com/Daxiongmao87/erawan.git
    cd erawan
    ```
 
