@@ -38,28 +38,31 @@ document.addEventListener('DOMContentLoaded', () => {
         document.body.classList.remove('dark-mode');
         darkModeToggle.innerHTML = '<i class="fas fa-adjust fa-flip-horizontal"></i>';
     }
+
 async function fetchBots() {
     try {
         const response = await fetch('/bots');
         const bots = await response.json();
+	console.log(bots);
         botsList.innerHTML = '';
         bots.forEach((bot, index) => {
+            const botName = bot.name;
             const botItem = document.createElement('div');
             botItem.classList.add('bot-item');
-            botItem.dataset.botName = bot.name;
+            botItem.dataset.botName = botName;
             botItem.innerHTML = `
-                <span>${bot.name}</span>
+                <span>${botName}</span>
                 <div class="bot-buttons">
-                    <button class="info-btn small-button" data-bot-name="${bot.name}"><i class="fas fa-info-circle"></i></i></button>
-                    <button class="delete-btn small-button" data-bot-name="${bot.name}"><i class="fa-solid fa-trash"></i></button>
+                    <button class="info-btn small-button" data-bot-name="${botName}"><i class="fas fa-info-circle"></i></i></button>
+                    <button class="delete-btn small-button" data-bot-name="${botName}"><i class="fa-solid fa-trash"></i></button>
                 </div>
             `;
             botsList.appendChild(botItem);
-            
+
             // Automatically select the first bot
             if (index === 0) {
                 botItem.classList.add('selected');
-                selectedBot = bot.name;
+                selectedBot = botName;
                 fetchChatHistory(selectedBot);
             }
         });
@@ -177,6 +180,7 @@ async function fetchBots() {
         }
     });
 
+
     confirmDeleteBtn.addEventListener('click', async () => {
         try {
             await fetch(`/delete_bot?bot_name=${botToDelete}`, {
@@ -271,12 +275,13 @@ async function fetchBots() {
             const endpoints = await response.json();
             endpointsList.innerHTML = '';
             endpoints.forEach(endpoint => {
+                const endpointName = endpoint.configurations['name'];  // Extract the 'name' from the configurations
                 const endpointItem = document.createElement('div');
                 endpointItem.classList.add('endpoint-item');
                 endpointItem.innerHTML = `
-                    <span>${endpoint.name}</span>
+                    <span>${endpointName}</span>
                     <div class="endpoint-buttons">
-                        <button class="delete-endpoint-btn small-button" data-endpoint-name="${endpoint.name}"><i class="fa-solid fa-trash"></i></button>
+                        <button class="delete-endpoint-btn small-button" data-endpoint-name="${endpointName}"><i class="fa-solid fa-trash"></i></button>
                     </div>
                 `;
                 endpointsList.appendChild(endpointItem);
@@ -287,19 +292,30 @@ async function fetchBots() {
         }
     }
 
+
     configureEndpointsBtn.addEventListener('click', fetchEndpoints);
 
     addEndpointBtn.addEventListener('click', async () => {
-        const endpointName = document.getElementById('new-endpoint-name').value;
-        const endpointUrl = document.getElementById('new-endpoint-url').value;
-        const endpointModel = document.getElementById('new-endpoint-model').value;
-        const endpointToken = document.getElementById('new-endpoint-token').value;
-        const contextLength = document.getElementById('new-endpoint-context-length').value;
-        const reservedTokens = document.getElementById('new-endpoint-reserved-tokens').value;
+        const endpointName = document.getElementById('new-endpoint-name').value.trim();
+        const endpointUrl = document.getElementById('new-endpoint-url').value.trim();
+        const configText = document.getElementById('new-endpoint-config').value.trim();
     
-        if (!endpointName || !endpointUrl || !endpointModel || !contextLength || !reservedTokens) {
+        if (!endpointName || !endpointUrl) {
             alert('Please fill out all required fields');
             return;
+        }
+    
+        // Parse the config input
+        const configLines = configText.split('\n');
+        const configEntries = [];
+        for (let line of configLines) {
+            const [variable_name, variable_value] = line.split('=').map(s => s.trim());
+            if (variable_name && variable_value) {
+                configEntries.push({ variable_name, variable_value });
+            } else if (line.trim() !== '') {
+                alert(`Invalid line: "${line}". Make sure it's in the format 'variable = value'`);
+                return;
+            }
         }
     
         try {
@@ -311,21 +327,13 @@ async function fetchBots() {
                 body: JSON.stringify({
                     name: endpointName,
                     api_url: endpointUrl,
-                    model: endpointModel,
-                    token: endpointToken,
-                    context_length: parseInt(contextLength, 10),
-                    reserved_tokens_for_response: parseInt(reservedTokens, 10)
+                    config: configEntries
                 })
             });
             if (response.ok) {
                 document.getElementById('new-endpoint-name').value = '';
                 document.getElementById('new-endpoint-url').value = '';
-                document.getElementById('new-endpoint-model').value = '';
-                document.getElementById('new-endpoint-token').value = '';
-                document.getElementById('new-endpoint-context-length').value = '';
-                document.getElementById('new-endpoint-reserved-tokens').value = '';
-                fetchEndpoints();
-                populateEndpointsSelect(); // Update the dropdowns
+                document.getElementById('new-endpoint-config').value = '';
             } else {
                 alert('Error adding endpoint');
             }
@@ -333,6 +341,8 @@ async function fetchBots() {
             console.error('Error adding endpoint:', error);
         }
     });
+
+
     closeEndpointConfigBtn.addEventListener('click', () => {
         configureEndpointsModal.style.display = 'none';
     });
@@ -364,12 +374,13 @@ async function fetchBots() {
             endpointSelectNewBot.innerHTML = '';
             endpointSelectBotInfo.innerHTML = '';
             endpoints.forEach(endpoint => {
+                const endpointName = endpoint.configurations['name'];  // Extract the 'name' from the configurations
                 const optionNewBot = document.createElement('option');
                 const optionBotInfo = document.createElement('option');
-                optionNewBot.value = endpoint.name;
-                optionNewBot.textContent = endpoint.name;
-                optionBotInfo.value = endpoint.name;
-                optionBotInfo.textContent = endpoint.name;
+                optionNewBot.value = endpointName;
+                optionNewBot.textContent = endpointName;
+                optionBotInfo.value = endpointName;
+                optionBotInfo.textContent = endpointName;
                 endpointSelectNewBot.appendChild(optionNewBot);
                 endpointSelectBotInfo.appendChild(optionBotInfo);
             });

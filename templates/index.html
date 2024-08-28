@@ -78,13 +78,10 @@
             <div id="endpoints-list">
                 <!-- Endpoint entries will be populated dynamically -->
             </div>
-            <h4>Add New Endpoint</h4>
-            <input type="text" id="new-endpoint-name" placeholder="Endpoint name">
+	    <h4>Add New Endpoint</h4>
+	    <input type="text" id="new-endpoint-name" placeholder="Endpoint name">
             <input type="text" id="new-endpoint-url" placeholder="API URL">
-            <input type="text" id="new-endpoint-model" placeholder="Model">
-            <input type="text" id="new-endpoint-token" placeholder="Token (optional)">
-            <input type="number" id="new-endpoint-context-length" placeholder="Context Length">
-            <input type="number" id="new-endpoint-reserved-tokens" placeholder="Reserved Tokens for Response">
+            <textarea id="new-endpoint-config" placeholder="Enter additional configuration in 'variable = value' format"></textarea>
             <div class="modal-buttons">
                 <button id="add-endpoint-btn">Add Endpoint</button>
                 <button id="close-endpoint-config-btn">Close</button>
